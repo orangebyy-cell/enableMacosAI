@@ -1,0 +1,68 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'orangebyy-cell/enableMacosAI'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Sync main with SkyBlue997/enableMacosAI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          api = "https://api.github.com"
+          repo = "orangebyy-cell/enableMacosAI"
+          headers = {
+              "Authorization": "Bearer " + os.environ["GH_TOKEN"],
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2026-03-10",
+          }
+
+          def call(path, data=None):
+              request = urllib.request.Request(
+                  api + path,
+                  data=None if data is None else json.dumps(data).encode(),
+                  headers=headers,
+                  method="GET" if data is None else "POST",
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+
+          metadata = call("/repos/" + repo)
+          if not metadata.get("fork") or metadata.get("parent", {}).get("full_name") != "SkyBlue997/enableMacosAI":
+              raise SystemExit("Unexpected upstream relationship; synchronization stopped.")
+
+          try:
+              result = call("/repos/" + repo + "/merge-upstream", {"branch": "main"})
+          except urllib.error.HTTPError as error:
+              if error.code == 409:
+                  print("::error::Upstream merge conflict. Resolve it manually; no force update was performed.")
+              else:
+                  print("::error::GitHub synchronization failed with HTTP " + str(error.code))
+              raise SystemExit(1)
+
+          print(result.get("message", "Synchronization completed."))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("### Upstream synchronization\n\n")
+              summary.write("- Source: SkyBlue997/enableMacosAI:main\n")
+              summary.write("- Target: orangebyy-cell/enableMacosAI:main\n")
+              summary.write("- Result: " + result.get("message", "Completed") + "\n")
+              summary.write("- Force updates: disabled\n")
